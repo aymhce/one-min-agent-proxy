@@ -52,6 +52,7 @@ import time
 import traceback
 import urllib.error
 import urllib.request
+import html
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -247,7 +248,14 @@ def add_common_preamble(chunks: List[str]) -> None:
         "Si Aider demande un format de diff, de patch ou d'édition précis, utilise exactement ce format.\n"
         "Ne produis pas de Markdown décoratif autour des patchs si les instructions demandent un format brut.\n"
         "Ne prétends pas avoir lu des fichiers qui ne sont pas fournis dans le contexte.\n"
-        "Ne fais pas de modifications non demandées."
+        "Ne fais pas de modifications non demandées.\n"
+        "N'utilise jamais d'entités HTML dans ta réponse.\n"
+        "Écris les caractères bruts directement : , >, /, =, &, `.\n"
+        "N'écris jamais &lt;, &gt;, &#x2F;, &#x3D;, &#x60; ou &amp; dans les patchs.\n"
+        "N'échappe jamais les underscores, dièses, esperluettes ou backticks avec des antislashs.\n"
+        "Écris aider_env, ONE_MIN_MODEL, # commentaire et ``` tels quels.\n"
+        "Pour les éditions Aider, respecte strictement les délimiteurs demandés par Aider.\n"
+        "Dans les blocs SEARCH, copie exactement le contenu existant du fichier, caractère par caractère.\n"
     )
 
 
@@ -293,6 +301,84 @@ def extract_1min_text(response_json: Dict[str, Any]) -> str:
     except Exception:
         return json.dumps(response_json, ensure_ascii=False, indent=2)
 
+def html_unescape_repeated(text: str, max_rounds: int = 5) -> str:
+    """
+    Décode les entités HTML plusieurs fois.
+
+    Exemple :
+      &amp;amp; -> &amp; -> &
+      &#x2F;   -> /
+      &#x3D;   -> =
+      &#x60;   -> `
+    """
+    previous = text
+
+    for _ in range(max_rounds):
+        current = html.unescape(previous)
+        if current == previous:
+            return current
+        previous = current
+
+    return previous
+
+
+def sanitize_for_aider(text: str) -> str:
+    """
+    Nettoie la sortie 1min.ai avant de la renvoyer à Aider.
+
+    Corrige notamment :
+      &lt;      -> &gt;      -> >
+      &#x2F;   -> /
+      &#x3D;   -> =
+      &#x60;   -> `
+      &amp;     -> &
+      \_      -> _
+      \#      -> #
+    """
+    if not isinstance(text, str):
+        return text
+
+    if env_bool("ONE_MIN_DEHTML_OUTPUT", True):
+        text = html_unescape_repeated(text)
+
+    if env_bool("ONE_MIN_UNESCAPE_MARKDOWN_OUTPUT", True):
+        replacements = {
+            "\\_": "_",
+            "\\#": "#",
+            "\\&": "&",
+            "\\`": "`",
+            "\\/": "/",
+            "\\*": "*",
+            "\$": "[",
+            "\$": "]",
+            "\$": "(",
+            "\$": ")",
+        }
+
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+
+    return text
+
+def sanitize_obj_for_aider(obj: Any) -> Any:
+    """
+    Nettoie récursivement tous les strings avant envoi à Aider.
+    C'est une sécurité de dernier recours pour éviter que du HTML échappé
+    arrive dans les événements SSE ou les réponses JSON.
+    """
+    if isinstance(obj, str):
+        return sanitize_for_aider(obj)
+
+    if isinstance(obj, list):
+        return [sanitize_obj_for_aider(item) for item in obj]
+
+    if isinstance(obj, dict):
+        return {
+            key: sanitize_obj_for_aider(value)
+            for key, value in obj.items()
+        }
+
+    return obj
 
 def call_1min_api(prompt: str, model: str, timeout_seconds: int) -> str:
     api_key = os.getenv("ONE_MIN_API_KEY")
@@ -354,7 +440,7 @@ def call_1min_api(prompt: str, model: str, timeout_seconds: int) -> str:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             raw = response.read().decode("utf-8", errors="replace")
             parsed = json.loads(raw)
-            return extract_1min_text(parsed)
+            return sanitize_for_aider(extract_1min_text(parsed))
 
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
@@ -376,6 +462,7 @@ def openai_error_body(message: str, status: int = 500) -> Dict[str, Any]:
 
 
 def chat_completion_response(model: str, content: str) -> Dict[str, Any]:
+    content = sanitize_for_aider(content)
     now = int(time.time())
     approx_completion_tokens = max(1, len(content.split()))
 
@@ -411,6 +498,7 @@ def responses_response(model: str, content: str) -> Dict[str, Any]:
       - content[] contient un item type output_text
       - output_text est aussi fourni comme raccourci pratique
     """
+    content = sanitize_for_aider(content)
     now = int(time.time())
     response_id = f"resp_1min_{now}"
     approx_completion_tokens = max(1, len(content.split()))
@@ -467,13 +555,19 @@ def responses_response(model: str, content: str) -> Dict[str, Any]:
 
 
 def sse_send(handler: BaseHTTPRequestHandler, event: Optional[str], data: Dict[str, Any]) -> None:
+    data = sanitize_obj_for_aider(data)
+
     if event:
         handler.wfile.write(f"event: {event}\n".encode("utf-8"))
-    handler.wfile.write(("data: " + json.dumps(data, ensure_ascii=False) + "\n\n").encode("utf-8"))
+
+    handler.wfile.write(
+        ("data: " + json.dumps(data, ensure_ascii=False) + "\n\n").encode("utf-8")
+    )
     handler.wfile.flush()
 
 
 def stream_chat_completion(handler: BaseHTTPRequestHandler, model: str, content: str) -> None:
+    content = sanitize_for_aider(content)
     now = int(time.time())
     completion_id = f"chatcmpl-1min-{now}"
 
@@ -531,6 +625,7 @@ def stream_responses(handler: BaseHTTPRequestHandler, model: str, content: str) 
     """
     Streaming Responses API minimal.
     """
+    content = sanitize_for_aider(content)
     now = int(time.time())
     response_id = f"resp_1min_{now}"
     item_id = f"msg_1min_{now}"
@@ -676,6 +771,7 @@ class OneMinAiderProxyHandler(BaseHTTPRequestHandler):
         )
 
     def send_json(self, status: int, body: Dict[str, Any]) -> None:
+        body = sanitize_obj_for_aider(body)
         encoded = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
         self.send_response(status)
