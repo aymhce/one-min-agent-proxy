@@ -3,6 +3,8 @@
 ## 1. Créez un environnement virtuel Python 3.12
 ```bash
 py -3.12 -m venv aider_env
+# ou
+python3.12 -m venv aider_env
 ```
 
 ## 2. Activez l'environnement
@@ -12,16 +14,18 @@ py -3.12 -m venv aider_env
 
 # Git Bash, macOS ou WSL
 source aider_env/Scripts/activate
+# ou
+source aider_env/bin/activate
 ```
 
 ## 3. Mettez pip à jour
 ```bash
-python -m pip install --upgrade pip
+python3.12 -m pip install --upgrade pip
 ```
 
 ## 4. Installez aider-chat
 ```bash
-python -m pip install aider-chat
+python3.12 -m pip install aider-chat
 ```
 
 ## 5. Lancez le proxy OneMin
@@ -31,7 +35,7 @@ cd
 source aider_env/Scripts/activate
 export ONE_MIN_API_KEY=xxx
 export ONE_MIN_MODEL=gpt-5.1-codex-mini
-python one_min_ai_aider_proxy.py --port 8787 &
+python3.12 one_min_ai_aider_proxy.py --port 8787 &
 ```
 
 ## 6. Lancez Aider via le proxy
