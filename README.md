@@ -33,7 +33,7 @@ Ouvrez un terminal (Git Bash ou équivalent) et exécutez :
 ```bash
 cd
 export ONE_MIN_API_KEY=xxx
-export ONE_MIN_MODEL=gpt-5.1-codex-mini
+export ONE_MIN_MODEL=gpt-5.3-codex
 python3.12 one_min_ai_aider_proxy.py --port 8787 &
 ```
 
@@ -42,7 +42,7 @@ Dans un autre terminal :
 ```bash
 cd
 export ONE_MIN_MODEL=gpt-5.3-codex
-winpty aider --model openai/gpt-5.3-codex --weak-model openai/gpt-5.1-codex-mini --openai-api-base http://127.0.0.1:8787/v1 --openai-api-key dummy --no-auto-commits --map-tokens 8192 --yes
+winpty aider --model openai/gpt-5.3-codex --weak-model openai/gpt-5.1-codex-mini --openai-api-base http://127.0.0.1:8787/v1 --openai-api-key dummy --no-auto-commits --map-tokens 8192 --yes  --no-stream
 ```
 
 ### Options supplémentaires
